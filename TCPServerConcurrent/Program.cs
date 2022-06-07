@@ -6,11 +6,13 @@ using System.Net.Http.Json;
 using System.Net.Http;
 using Newtonsoft.Json;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 
 namespace TCPServerConcurrent
 {
     class Program
     {
+
         static void Main(string[] args)
         {
             Console.WriteLine("TCP Server concurrent!");
@@ -18,43 +20,85 @@ namespace TCPServerConcurrent
             //concurrent server handles multiple cleients at the same time
 
             //initialisere et objekt af tcplistner class
-            TcpListener listener = new TcpListener(IPAddress.Any, 7);
+            TcpListener listener = new TcpListener(IPAddress.Any, 43214);
             //begynd at "lytte" for en connection
             listener.Start();
 
-            //acceptere tcp client objekt
-            //AcceptTcpClient - dette returnere et TcpClient object
-            TcpClient socket = listener.AcceptTcpClient();
-            HandleClient(socket);
-            listener.Stop();         
-        }
+            while (true)
+            {
+                //acceptere tcp client objekt
+                //AcceptTcpClient - dette returnere et TcpClient object
+                //krav
+                TcpClient socket = listener.AcceptTcpClient();
 
-        //handle client 
-        public static async Task HandleClient(TcpClient socket)
-        {
-            //opg 7 - 1. GetAll: returner en liste med alle movies
-            using (HttpClient httpClient = new HttpClient())
-            { 
-                //streams - read and write i connectionen
-                NetworkStream networkStream = socket.GetStream();
-                //derefter splittes de op i to streams
-                StreamReader reader = new StreamReader(networkStream);
-                StreamWriter writer = new StreamWriter(networkStream);
-                //læs det client sender
-                string message = reader.ReadLine();
-                Console.WriteLine("Client send this: " + message);
-                writer.WriteLine(message);
-                //skyl ud, rydde op
-                writer.Flush();
+                //CONCURRENT server - Task.Run(() håndtere/starter flere tråde,
+                //så vi kan have flere clients samtidig
 
-                //Opg 7 -  modtager alle filmene
-                //kalde GET fra din REST controller movie
-                //tilføjede url
-                httpClient.GetFromJsonAsync("https://restapimovie.azurewebsites.net/api/movies");
+                //Objekt niveau
+                //Der er ikke nogle informationer der bliver gemt i Main i program
+                //Program program = new Program();
 
-                //luk socket
-                socket.Close();
+                //Task.Run(() => program.HandleAClient());
+
+                Task.Run(() => HandleAClient(socket));
             }
+        }
+        //refactoring - gør det smartere
+        public static void HandleAClient(TcpClient socket)
+        {
+            //streams - read and write i connectionen
+            //data strøm frem og tilbage, det er to-vejs kommunikation
+            NetworkStream networkStream = socket.GetStream();
+            //derefter splittes de op i to streams
+            StreamReader reader = new StreamReader(networkStream);
+            StreamWriter writer = new StreamWriter(networkStream);
+
+            //opret et nyt movie object
+            //kald metoden getall, der returnere alle movies i en JSONString
+            //kald getByCountry - der returner en liste med alle movies der indeholder
+            //en tekststreng i deres Country property
+            MovieManager movieManager = new MovieManager();
+
+            //læs det client anmoder om
+            string message = reader.ReadLine();
+
+            if (message == "GetAll")
+            {
+                List<Movie> getAllMovies = movieManager.GetAll();
+                //Lavet om til JSON-format, udveksle data
+                //data udveksle en liste af Movie objekter
+                string movieSerializeToAJsonString =
+                JsonConvert.SerializeObject(getAllMovies);
+                Console.WriteLine("The list has returned");
+                //reultatet af serialization
+                //skriver til client
+                writer.WriteLine(movieSerializeToAJsonString);
+            }
+            else if (message.StartsWith("GetByCountry"))
+            {
+                //jeg vil kun have en del af stringen, derfor bruger jeg Substring
+                //tæller antal karaktere hvor den skal starte med at returnere stringen fra
+                //jeg ignorere derfor de første 13 karaktere | alt før 13
+                string filterOnCountry = message.Substring(13);
+                //yderligere sender et land med, fra clienten
+                List<Movie> getByCountry = movieManager.GetByCountry(filterOnCountry);
+                string countrySerializeToAJsonString =
+                JsonConvert.SerializeObject(getByCountry);
+                Console.WriteLine("The list with a filter");
+                //skriver til client
+                writer.WriteLine(countrySerializeToAJsonString);
+            }
+            //besked i konsollen
+            //Console.WriteLine("Client send this: " + message);
+
+            //skyl ud, rydde op, TCP streams har buffer og cache
+            //- tvinge den til at sende pakken her og nu
+            writer.Flush();
+            //stopper med at ''lytte'' - stopper serveren
+            //listener.Stop();
+            //luk socket - fordi det er TCP, for at spare på com ressourcer, så lad os afslutte den med det samme
+            //spar på ressourcer, ryd ordenligt op
+            socket.Close();
         }
     }
 } 
